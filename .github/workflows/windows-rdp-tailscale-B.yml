@@ -1,8 +1,8 @@
-name: Windows RDP via Tailscale (B)
+# name: Windows RDP via Tailscale (B)
 
-on:
-  workflow_dispatch:
-    inputs:
+# on:
+#  workflow_dispatch:
+#    inputs:
       ts_tailnet:
         description: "Tailscale tailnet (e.g. you@gmail.com)"
         required: true
@@ -28,7 +28,7 @@ on:
         required: false
         default: "0"
 
-  workflow_run:
+ # workflow_run:
     workflows: ["Windows RDP via Tailscale (A)"]
     types: [completed]
 
@@ -51,9 +51,9 @@ env:
   RDP_PASS: Bullet@12345
   TS_HOSTNAME: bullet
 
-jobs:
+#jobs:
   rdp:
-    runs-on: windows-2022
+#    runs-on: windows-2022
     timeout-minutes: 370
     steps:
       - name: 🔧 Resolve inputs (safe)
@@ -125,8 +125,8 @@ jobs:
           Set-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name fDenyTSConnections -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop" | Out-Null
 
-      - name: 🧹 PURGE any devices containing 'bullet' (startup)
-        run: |
+#      - name: 🧹 PURGE any devices containing 'bullet' (startup)
+#        run: |
           $hdr = @{ Authorization = "Bearer ${{ steps.cfg.outputs.apikey }}" }
           $tn  = [uri]::EscapeDataString("${{ steps.cfg.outputs.tailnet }}")
           $match = { param($d)
@@ -172,9 +172,9 @@ jobs:
             Start-Sleep -Seconds 60
           }
 
-      - name: 🧹 PURGE any devices containing 'bullet' (exit)
+ #     - name: 🧹 PURGE any devices containing 'bullet' (exit)
         if: always()
-        run: |
+#        run: |
           $hdr = @{ Authorization = "Bearer ${{ steps.cfg.outputs.apikey }}" }
           $tn  = [uri]::EscapeDataString("${{ steps.cfg.outputs.tailnet }}")
           $match = { param($d)
