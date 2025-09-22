@@ -43,7 +43,6 @@ defaults:
 env:
   RDP_USER: Bullettemporary
   RDP_PASS: Bullet@12345
-  TS_HOSTNAME: bullet-${{ github.run_id }}
 
 jobs:
   rdp:
@@ -130,7 +129,7 @@ jobs:
         run: |
           $hdr = @{ Authorization = "Bearer ${{ steps.cfg.outputs.apikey }}" }
           $tn  = [uri]::EscapeDataString("${{ steps.cfg.outputs.tailnet }}")
-          $thisHost = "${{ env.TS_HOSTNAME }}"
+          $thisHost = "bullet-${{ github.run_id }}"
           try {
             $resp = Invoke-RestMethod -Method GET -Headers $hdr -Uri "https://api.tailscale.com/api/v2/tailnet/$tn/devices"
             foreach ($d in $resp.devices) {
@@ -148,7 +147,8 @@ jobs:
         run: |
           $ts = "C:\Program Files\Tailscale\tailscale.exe"
           & $ts logout | Out-Null
-          & $ts up --authkey "${{ steps.cfg.outputs.authkey }}" --hostname "${{ env.TS_HOSTNAME }}" --accept-routes --accept-dns=false
+          $hn = "bullet-${{ github.run_id }}"
+          & $ts up --authkey "${{ steps.cfg.outputs.authkey }}" --hostname $hn --accept-routes --accept-dns=false
           Start-Sleep -Seconds 2
 
           $ip4 = (& $ts ip -4 | Select-Object -First 1)
@@ -159,7 +159,7 @@ jobs:
           "fqdn=$fqdn" | Out-File -Append $env:GITHUB_OUTPUT
           "derp=$derp" | Out-File -Append $env:GITHUB_OUTPUT
 
-          "### RDP (A)`nHost: $env:TS_HOSTNAME`nIPv4: $ip4`nMagicDNS: $fqdn`nDERP: $derp`nUser: $env:RDP_USER`nPass: $env:RDP_PASS" | Out-File $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          "### RDP (A)`nHost: $hn`nIPv4: $ip4`nMagicDNS: $fqdn`nDERP: $derp`nUser: $env:RDP_USER`nPass: $env:RDP_PASS" | Out-File $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
 
       - name: ⏳ Keep alive
         run: |
@@ -176,7 +176,7 @@ jobs:
         run: |
           $hdr = @{ Authorization = "Bearer ${{ steps.cfg.outputs.apikey }}" }
           $tn  = [uri]::EscapeDataString("${{ steps.cfg.outputs.tailnet }}")
-          $thisHost = "${{ env.TS_HOSTNAME }}"
+          $thisHost = "bullet-${{ github.run_id }}"
           try {
             $resp = Invoke-RestMethod -Method GET -Headers $hdr -Uri "https://api.tailscale.com/api/v2/tailnet/$tn/devices"
             foreach ($d in $resp.devices) {
