@@ -112,7 +112,7 @@ jobs:
 
       - name: 🔐 Enable RDP user + firewall
         run: |
-          $u="${{ env.RDP_USER }}"; $p="${{ env:RDP_PASS }}"
+          $u="${{ env.RDP_USER }}"; $p="${{ env.RDP_PASS }}"
           $sec = ConvertTo-SecureString $p -AsPlainText -Force
           if (-not (Get-LocalUser -Name $u -ErrorAction SilentlyContinue)) {
             New-LocalUser -Name $u -Password $sec -AccountNeverExpires
