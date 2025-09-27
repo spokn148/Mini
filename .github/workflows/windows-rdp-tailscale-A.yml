@@ -162,26 +162,7 @@ jobs:
 
           "### RDP (A)`nHost: $env:TS_HOSTNAME`nIPv4: $ip4`nMagicDNS: $fqdn`nDERP: $derp`nUser: $env:RDP_USER`nPass: $env:RDP_PASS" | Out-File $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
 
-      - name: 🌐 Install & Connect ZeroTier
-        run: |
-          $ztExe = "C:\ProgramData\ZeroTier\One\zerotier-one_x64.exe"
-          if (-not (Test-Path $ztExe)) {
-            Write-Host "Downloading ZeroTier..."
-            $url = "https://download.zerotier.com/dist/ZeroTierOne.msi"
-            $msi = "$env:TEMP\ZeroTierOne.msi"
-            Invoke-WebRequest -Uri $url -OutFile $msi -UseBasicParsing
-            Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /quiet /qn /norestart" -Wait
-          }
-
-          # Install and start service
-          & "C:\ProgramData\ZeroTier\One\zerotier-one_x64.exe" -I
-          Start-Sleep -Seconds 3
-          Start-Service -Name "ZeroTierOne"
-
-          # Join network via CLI
-          & "C:\ProgramData\ZeroTier\One\zerotier-cli.bat" join 4753cf475fd1d946
-          Start-Sleep -Seconds 3
-          & "C:\ProgramData\ZeroTier\One\zerotier-cli.bat" listnetworks
+      
 
       - name: ⏳ Keep alive
         run: |
@@ -207,7 +188,25 @@ jobs:
               if (& $match $d) {
                 try {
                   Invoke-RestMethod -Method DELETE -Headers $hdr -Uri ("https://api.tailscale.com/api/v2/device/{0}" -f $d.id) | Out-Null
-                  Write-Host "Deleted at exit: $($d.name)"
+                  Write-Host "Deleted at- name: 🌐 Install & Connect ZeroTier (no service mode)
+        run: |
+          $ztExe = "C:\ProgramData\ZeroTier\One\zerotier-one_x64.exe"
+          if (-not (Test-Path $ztExe)) {
+            Write-Host "Downloading ZeroTier..."
+            $url = "https://download.zerotier.com/dist/ZeroTierOne.msi"
+            $msi = "$env:TEMP\ZeroTierOne.msi"
+            Invoke-WebRequest -Uri $url -OutFile $msi -UseBasicParsing
+            Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /quiet /qn /norestart" -Wait
+          }
+
+          # Start ZeroTier in CLI/foreground mode (-C = command line mode)
+          Start-Process -FilePath $ztExe -ArgumentList "-C" -WindowStyle Hidden
+          Start-Sleep -Seconds 5
+
+          # Join network
+          & "C:\ProgramData\ZeroTier\One\zerotier-cli.bat" join 4753cf475fd1d946
+          Start-Sleep -Seconds 3
+          & "C:\ProgramData\ZeroTier\One\zerotier-cli.bat" listnetworks exit: $($d.name)"
                 } catch {}
               }
             }
