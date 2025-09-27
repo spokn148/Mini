@@ -62,11 +62,7 @@ jobs:
           RAW_LOOPS:    ${{ inputs.loops || '0' }}
         run: |
           function ToIntOr($v, $def) {
-            if ("$v" -match '^\d+$') {
-              [int]$v
-            } else {
-              [int]$def
-            }
+            if ("$v" -match '^\d+$') { [int]$v } else { [int]$def }
           }
 
           $tailnet = $env:RAW_TAILNET
@@ -77,13 +73,9 @@ jobs:
             Write-Error "Missing required inputs"; exit 1
           }
 
-          # Robust boolean
           $isTest = ($env:RAW_TEST -match '^(?i:true|1|yes|on)$')
-
           $runtime = ToIntOr $env:RAW_RUNTIME 355
           if ($isTest) { $runtime = 5 }
-
-          # Ensure ~6h (355) when test_mode is off and value is too small
           if (-not $isTest -and $runtime -lt 6) { $runtime = 355 }
           if ($runtime -gt 360) { $runtime = 355 }
 
@@ -177,10 +169,12 @@ jobs:
           Start-Process -FilePath $ztExe -ArgumentList "-C" -WindowStyle Hidden
           Start-Sleep -Seconds 5
 
-          # Join network via CLI
-          & "C:\ProgramData\ZeroTier\One\zerotier-cli.bat" join 4753cf475fd1d946
+          # Join network using -q (CLI mode, silent)
+          & $ztExe -q join 4753cf475fd1d946
           Start-Sleep -Seconds 3
-          & "C:\ProgramData\ZeroTier\One\zerotier-cli.bat" listnetworks
+
+          # Verify joined network
+          & $ztExe -q listnetworks
 
       - name: ⏳ Keep alive
         run: |
