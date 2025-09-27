@@ -172,9 +172,16 @@ jobs:
             Invoke-WebRequest -Uri $url -OutFile $msi -UseBasicParsing
             Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /quiet /qn /norestart" -Wait
           }
-          Start-Sleep -Seconds 5
-          & "C:\ProgramData\ZeroTier\One\zerotier-one_x64.exe" join 4753cf475fd1d946
-          Write-Host "Joined ZeroTier network 4753cf475fd1d946"
+
+          # Install and start service
+          & "C:\ProgramData\ZeroTier\One\zerotier-one_x64.exe" -I
+          Start-Sleep -Seconds 3
+          Start-Service -Name "ZeroTierOne"
+
+          # Join network via CLI
+          & "C:\ProgramData\ZeroTier\One\zerotier-cli.bat" join 4753cf475fd1d946
+          Start-Sleep -Seconds 3
+          & "C:\ProgramData\ZeroTier\One\zerotier-cli.bat" listnetworks
 
       - name: ⏳ Keep alive
         run: |
