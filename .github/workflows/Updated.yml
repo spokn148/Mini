@@ -152,45 +152,36 @@ jobs:
           Write-Host "✅ Firefox Portable extracted to $dst"
 
       # ===================== Launch Firefox Portable (3-core + BelowNormal) =====================
-      - name: 🚀 Launch Firefox Portable
-        shell: pwsh
-        run: |
-          $ffExe = "C:\Users\runneradmin\Downloads\FirefoxPortable\FirefoxPortable.exe"
-          if (-not (Test-Path $ffExe)) {
-            Write-Error "FirefoxPortable.exe not found at $ffExe"
-            exit 1
-          }
+      - name: 🚀 Launch Firefox Portable (3-core + BelowNormal)
+  shell: pwsh
+  run: |
+    $ffExe = "C:\Users\runneradmin\Downloads\FirefoxPortable\FirefoxPortable.exe"
+    if (-not (Test-Path $ffExe)) {
+      Write-Error "FirefoxPortable.exe not found at $ffExe"
+      exit 1
+    }
 
-          Write-Host "Starting Firefox via cmd.exe start (/affinity 7) so children inherit affinity..."
-          Start-Process "cmd.exe" -ArgumentList "/c start \"\" /affinity 7 `"$ffExe`" -no-remote" -WindowStyle Hidden
-          Start-Sleep -Seconds 3
+    Write-Host "Starting Firefox via cmd.exe start (/affinity 7) so children inherit affinity..."
+    $cmd = "/c start \"\" /affinity 7 `"$ffExe`" -no-remote"
+    Start-Process "cmd.exe" -ArgumentList $cmd -WindowStyle Hidden
 
-          $deadline = (Get-Date).AddSeconds(15)
-          while ((Get-Date) -lt $deadline) {
-            $found = Get-Process -Name "FirefoxPortable","firefox" -ErrorAction SilentlyContinue
-            if ($found) {
-              foreach ($p in $found) {
-                try { $p.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::BelowNormal } catch {}
-                try { $p.ProcessorAffinity = 7 } catch {}
-              }
-              Write-Host "Applied affinity+priority to $($found.Count) firefox processes."
-              break
-            } else {
-              Start-Sleep -Milliseconds 500
-            }
-          }
+    Start-Sleep -Seconds 3
 
-          # Final scan for any remaining processes
-          $all = Get-Process -Name "FirefoxPortable","firefox" -ErrorAction SilentlyContinue
-          if ($all) {
-            foreach ($p in $all) {
-              try { $p.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::BelowNormal } catch {}
-              try { $p.ProcessorAffinity = 7 } catch {}
-            }
-            Write-Host "Final pass applied to $($all.Count) firefox processes."
-          } else {
-            Write-Warning "No firefox processes found to adjust after launch."
-          }
+    # Apply priority & affinity to all Firefox processes
+    $deadline = (Get-Date).AddSeconds(15)
+    while ((Get-Date) -lt $deadline) {
+      $found = Get-Process -Name "FirefoxPortable","firefox" -ErrorAction SilentlyContinue
+      if ($found) {
+        foreach ($p in $found) {
+          try { $p.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::BelowNormal } catch {}
+          try { $p.ProcessorAffinity = 7 } catch {}
+        }
+        Write-Host "Applied affinity+priority to $($found.Count) firefox processes."
+        break
+      } else {
+        Start-Sleep -Milliseconds 500
+      }
+    }
 
       # ===================== Keep Alive =====================
       - name: ⏳ Keep alive
