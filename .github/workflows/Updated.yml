@@ -103,12 +103,8 @@ jobs:
         run: |
           $u="${{ env.RDP_USER }}"; $p="${{ env.RDP_PASS }}"
           $sec = ConvertTo-SecureString $p -AsPlainText -Force
-          if (-not (Get-LocalUser -Name $u -ErrorAction SilentlyContinue)) {
-            New-LocalUser -Name $u -Password $sec -AccountNeverExpires
-          } else {
-            Set-LocalUser -Name $u -Password $sec -AccountNeverExpires
-            Enable-LocalUser -Name $u
-          }
+          Set-LocalUser -Name $u -Password $sec -AccountNeverExpires
+          Enable-LocalUser -Name $u
           Add-LocalGroupMember -Group Administrators -Member $u -ErrorAction SilentlyContinue
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member $u -ErrorAction SilentlyContinue
           Set-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name fDenyTSConnections -Value 0
@@ -144,9 +140,8 @@ jobs:
           & $ztExe -q join 4753cf475fd1d946
           & $ztExe -q listnetworks
 
-      # ===================== Download & Extract Firefox Portable =====================
+      # ===================== Download & Extract Firefox Portable (FAST) =====================
       - name: 📥 Download & Extract Firefox Portable
-        shell: powershell
         run: |
           $zip  = "$env:TEMP\FirefoxPortable.zip"
           $dst  = "C:\Users\runneradmin\Downloads\FirefoxPortable"
@@ -156,36 +151,24 @@ jobs:
           Expand-Archive -Path $zip -DestinationPath $dst -Force
           Write-Host "✅ Firefox Portable extracted to $dst"
 
-      # ===================== Launch Firefox Portable (3-core + BelowNormal) =====================
+      # ===================== Launch Firefox Portable (BelowNormal + 3 cores) =====================
       - name: 🚀 Launch Firefox Portable
-        shell: pwsh
         run: |
           $ffExe = "C:\Users\runneradmin\Downloads\FirefoxPortable\FirefoxPortable.exe"
+
           if (-not (Test-Path $ffExe)) {
-            Write-Error "FirefoxPortable.exe not found at $ffExe"
-            exit 1
+              Write-Error "FirefoxPortable.exe not found!"
+              exit 1
           }
 
-          Write-Host "Starting Firefox via cmd.exe start (/affinity 7) so children inherit affinity..."
-          $cmd = "/c start \"\" /affinity 7 `"$ffExe`" -no-remote"
-          Start-Process "cmd.exe" -ArgumentList $cmd -WindowStyle Hidden
-
-          Start-Sleep -Seconds 3
-
-          # Apply priority & affinity to all Firefox processes
-          $deadline = (Get-Date).AddSeconds(15)
-          while ((Get-Date) -lt $deadline) {
-            $found = Get-Process -Name "FirefoxPortable","firefox" -ErrorAction SilentlyContinue
-            if ($found) {
-              foreach ($p in $found) {
-                try { $p.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::BelowNormal } catch {}
-                try { $p.ProcessorAffinity = 7 } catch {}
-              }
-              Write-Host "Applied affinity+priority to $($found.Count) firefox processes."
-              break
-            } else {
-              Start-Sleep -Milliseconds 500
-            }
+          $proc = Start-Process -FilePath $ffExe -ArgumentList "-no-remote" -WindowStyle Normal -PassThru
+          Start-Sleep -Seconds 2
+          try {
+              $proc.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::BelowNormal
+              $proc.ProcessorAffinity = 0b0111
+              Write-Host "FirefoxPortable started successfully with BelowNormal priority and 3 cores."
+          } catch {
+              Write-Warning "Could not adjust priority or core affinity: $_"
           }
 
       # ===================== Keep Alive =====================
