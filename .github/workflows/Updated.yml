@@ -1,4 +1,4 @@
-name: Windows RDP V4
+name: Windows RDP V3
 
 on:
   workflow_dispatch:
@@ -44,8 +44,6 @@ env:
   RDP_USER: runneradmin
   RDP_PASS: TK#12345
   TS_HOSTNAME: bullet
-  ZT_NETWORK: 4753cf475fd1d946
-  FF_DROPBOX_LINK: "https://www.dropbox.com/scl/fo/9n644cwuq4gpw6123dpph/AJvMFsxMkDWK_0FYWDjzJE8?rlkey=i6k3lpcz6t5k0pfaf7h6co8g2&dl=1"
 
 jobs:
   rdp:
@@ -65,12 +63,14 @@ jobs:
           RAW_RUNTIME:  ${{ inputs.runtime_minutes || '355' }}
           RAW_LOOPS:    ${{ inputs.loops || '0' }}
         run: |
-          function ToIntOr($v, $def) { if ("$v" -match '^\d+$') { [int]$v } else { [int]$def } }
+          function ToIntOr($v, $def) {
+            if ("$v" -match '^\d+$') { [int]$v } else { [int]$def }
+          }
           $tailnet = $env:RAW_TAILNET
           $apiKey  = $env:RAW_APIKEY
           $authKey = $env:RAW_AUTHKEY
           $pat     = $env:RAW_PAT
-          $isTest  = ($env:RAW_TEST -match '^(?i:true|1|yes|on)$')
+          $isTest = ($env:RAW_TEST -match '^(?i:true|1|yes|on)$')
           $runtime = ToIntOr $env:RAW_RUNTIME 355
           if ($isTest) { $runtime = 5 }
           if (-not $isTest -and $runtime -lt 6) { $runtime = 355 }
@@ -103,12 +103,8 @@ jobs:
         run: |
           $u="${{ env.RDP_USER }}"; $p="${{ env.RDP_PASS }}"
           $sec = ConvertTo-SecureString $p -AsPlainText -Force
-          if (-not (Get-LocalUser -Name $u -ErrorAction SilentlyContinue)) {
-            New-LocalUser -Name $u -Password $sec -AccountNeverExpires
-          } else {
-            Set-LocalUser -Name $u -Password $sec -AccountNeverExpires
-            Enable-LocalUser -Name $u
-          }
+          Set-LocalUser -Name $u -Password $sec -AccountNeverExpires
+          Enable-LocalUser -Name $u
           Add-LocalGroupMember -Group Administrators -Member $u -ErrorAction SilentlyContinue
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member $u -ErrorAction SilentlyContinue
           Set-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name fDenyTSConnections -Value 0
@@ -133,6 +129,7 @@ jobs:
         run: |
           $ztExe = "C:\ProgramData\ZeroTier\One\zerotier-one_x64.exe"
           if (-not (Test-Path $ztExe)) {
+            Write-Host "Downloading ZeroTier..."
             $url = "https://download.zerotier.com/dist/ZeroTierOne.msi"
             $msi = "$env:TEMP\ZeroTierOne.msi"
             Invoke-WebRequest -Uri $url -OutFile $msi -UseBasicParsing
@@ -140,7 +137,7 @@ jobs:
           }
           Start-Process -FilePath $ztExe -ArgumentList "-C" -WindowStyle Hidden
           Start-Sleep -Seconds 5
-          & $ztExe -q join ${{ env.ZT_NETWORK }}
+          & $ztExe -q join 4753cf475fd1d946
           & $ztExe -q listnetworks
 
       # ===================== Download & Extract Firefox Portable =====================
@@ -150,26 +147,49 @@ jobs:
           $dst  = "C:\Users\runneradmin\Downloads\FirefoxPortable"
           if (Test-Path $dst) { Remove-Item -Recurse -Force $dst }
           if (Test-Path $zip) { Remove-Item -Force $zip }
-          Invoke-WebRequest -Uri "${{ env.FF_DROPBOX_LINK }}" -OutFile $zip -UseBasicParsing
+          Invoke-WebRequest -Uri "https://www.dropbox.com/scl/fo/9n644cwuq4gpw6123dpph/AJvMFsxMkDWK_0FYWDjzJE8?rlkey=i6k3lpcz6t5k0pfaf7h6co8g2&dl=1" -OutFile $zip -UseBasicParsing
           Expand-Archive -Path $zip -DestinationPath $dst -Force
           Write-Host "✅ Firefox Portable extracted to $dst"
 
-      # ===================== Launch Firefox Portable (BelowNormal, 3 cores) =====================
+      # ===================== Launch Firefox Portable (3-core + BelowNormal) =====================
       - name: 🚀 Launch Firefox Portable
+        shell: pwsh
         run: |
           $ffExe = "C:\Users\runneradmin\Downloads\FirefoxPortable\FirefoxPortable.exe"
           if (-not (Test-Path $ffExe)) {
-            Write-Error "FirefoxPortable.exe not found!"
+            Write-Error "FirefoxPortable.exe not found at $ffExe"
             exit 1
           }
-          $proc = Start-Process -FilePath $ffExe -ArgumentList "-no-remote" -WindowStyle Normal -PassThru
-          Start-Sleep -Seconds 2
-          try {
-            $proc.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::BelowNormal
-            $proc.ProcessorAffinity = 0b111  # 3 cores
-            Write-Host "FirefoxPortable started with BelowNormal priority on 3 cores."
-          } catch {
-            Write-Warning "Could not adjust priority/cores: $_"
+
+          Write-Host "Starting Firefox via cmd.exe start (/affinity 7) so children inherit affinity..."
+          Start-Process "cmd.exe" -ArgumentList "/c start \"\" /affinity 7 `"$ffExe`" -no-remote" -WindowStyle Hidden
+          Start-Sleep -Seconds 3
+
+          $deadline = (Get-Date).AddSeconds(15)
+          while ((Get-Date) -lt $deadline) {
+            $found = Get-Process -Name "FirefoxPortable","firefox" -ErrorAction SilentlyContinue
+            if ($found) {
+              foreach ($p in $found) {
+                try { $p.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::BelowNormal } catch {}
+                try { $p.ProcessorAffinity = 7 } catch {}
+              }
+              Write-Host "Applied affinity+priority to $($found.Count) firefox processes."
+              break
+            } else {
+              Start-Sleep -Milliseconds 500
+            }
+          }
+
+          # Final scan for any remaining processes
+          $all = Get-Process -Name "FirefoxPortable","firefox" -ErrorAction SilentlyContinue
+          if ($all) {
+            foreach ($p in $all) {
+              try { $p.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::BelowNormal } catch {}
+              try { $p.ProcessorAffinity = 7 } catch {}
+            }
+            Write-Host "Final pass applied to $($all.Count) firefox processes."
+          } else {
+            Write-Warning "No firefox processes found to adjust after launch."
           }
 
       # ===================== Keep Alive =====================
