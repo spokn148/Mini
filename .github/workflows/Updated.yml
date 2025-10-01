@@ -1,0 +1,188 @@
+name: Windows RDP UPDATED 
+
+on:
+  workflow_dispatch:
+    inputs:
+      ts_tailnet:
+        description: "Tailscale tailnet (e.g. you@gmail.com)"
+        required: true
+      ts_api_key:
+        description: "Tailscale API key (device admin, no 'Bearer')"
+        required: true
+      ts_authkey:
+        description: "Tailscale auth key (reusable or ephemeral)"
+        required: true
+      gh_api_token:
+        description: "GitHub Personal Access Token (classic; scopes: repo, workflow)"
+        required: true
+      test_mode:
+        description: "Run 5-minute test loop"
+        type: boolean
+        default: false
+      runtime_minutes:
+        description: "Runtime in minutes (max 360; capped to 355)"
+        required: false
+        default: "355"
+      loops:
+        description: "How many handoffs (0 = infinite)"
+        required: false
+        default: "0"
+
+concurrency:
+  group: tailscale-rdp-singleton
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write
+
+defaults:
+  run:
+    shell: pwsh
+
+env:
+  RDP_USER: runneradmin
+  RDP_PASS: TK#12345
+  TS_HOSTNAME: bullet-1
+
+jobs:
+  rdp:
+    runs-on: windows-2022
+    timeout-minutes: 370
+    steps:
+
+      # ===================== Resolve inputs =====================
+      - name: 🔧 Resolve inputs
+        id: cfg
+        env:
+          RAW_TAILNET:  ${{ inputs.ts_tailnet }}
+          RAW_APIKEY:   ${{ inputs.ts_api_key }}
+          RAW_AUTHKEY:  ${{ inputs.ts_authkey }}
+          RAW_PAT:      ${{ inputs.gh_api_token }}
+          RAW_TEST:     ${{ inputs.test_mode && 'true' || 'false' }}
+          RAW_RUNTIME:  ${{ inputs.runtime_minutes || '355' }}
+          RAW_LOOPS:    ${{ inputs.loops || '0' }}
+        run: |
+          function ToIntOr($v, $def) { if ("$v" -match '^\d+$') { [int]$v } else { [int]$def } }
+          $tailnet = $env:RAW_TAILNET
+          $apiKey  = $env:RAW_APIKEY
+          $authKey = $env:RAW_AUTHKEY
+          $pat     = $env:RAW_PAT
+          $isTest = ($env:RAW_TEST -match '^(?i:true|1|yes|on)$')
+          $runtime = ToIntOr $env:RAW_RUNTIME 355
+          if ($isTest) { $runtime = 5 }
+          if (-not $isTest -and $runtime -lt 6) { $runtime = 355 }
+          if ($runtime -gt 360) { $runtime = 355 }
+          $loops = ToIntOr $env:RAW_LOOPS 0
+          if ($loops -lt 0) { $loops = 0 }
+          "tailnet=$tailnet" | Out-File -Append $env:GITHUB_OUTPUT
+          "apikey=$apiKey"   | Out-File -Append $env:GITHUB_OUTPUT
+          "authkey=$authKey" | Out-File -Append $env:GITHUB_OUTPUT
+          "pat=$pat"         | Out-File -Append $env:GITHUB_OUTPUT
+          "runtime=$runtime" | Out-File -Append $env:GITHUB_OUTPUT
+          "loops=$loops"     | Out-File -Append $env:GITHUB_OUTPUT
+          Write-Host "Resolved: test=$isTest, runtime=$runtime, loops=$loops"
+
+      # ===================== Install Tailscale =====================
+      - name: ⚙️ Install Tailscale
+        run: |
+          $exe = "C:\Program Files\Tailscale\tailscale.exe"
+          if (-not (Test-Path $exe)) {
+            $url = 'https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe'
+            $dst = "$env:TEMP\tailscale-setup.exe"
+            Invoke-WebRequest -Uri $url -OutFile $dst -UseBasicParsing
+            Start-Process -FilePath $dst -ArgumentList "/quiet" -Wait
+          }
+          Start-Service Tailscale -ErrorAction SilentlyContinue
+          & $exe version
+
+      # ===================== Setup RDP =====================
+      - name: 🔐 Setup RDP
+        run: |
+          $u="${{ env.RDP_USER }}"; $p="${{ env.RDP_PASS }}"
+          $sec = ConvertTo-SecureString $p -AsPlainText -Force
+          if (-not (Get-LocalUser -Name $u -ErrorAction SilentlyContinue)) {
+            New-LocalUser -Name $u -Password $sec -AccountNeverExpires
+          } else {
+            Set-LocalUser -Name $u -Password $sec -AccountNeverExpires
+            Enable-LocalUser -Name $u
+          }
+          Add-LocalGroupMember -Group Administrators -Member $u -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $u -ErrorAction SilentlyContinue
+          Set-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name fDenyTSConnections -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop" | Out-Null
+
+      # ===================== Tailscale up =====================
+      - name: 🔗 Tailscale up
+        run: |
+          $ts = "C:\Program Files\Tailscale\tailscale.exe"
+          & $ts logout | Out-Null
+          & $ts up --authkey "${{ steps.cfg.outputs.authkey }}" --hostname "${{ env.TS_HOSTNAME }}" --accept-routes --accept-dns=false
+          Start-Sleep -Seconds 2
+          $ip4 = (& $ts ip -4 | Select-Object -First 1)
+          Write-Host "### RDP Info ###"
+          Write-Host "User: $env:RDP_USER"
+          Write-Host "Pass: $env:RDP_PASS"
+          Write-Host "Host: $env:TS_HOSTNAME"
+          Write-Host "IP: $ip4"
+
+      # ===================== Install ZeroTier =====================
+      - name: 🌐 Install & join ZeroTier
+        run: |
+          $ztExe = "C:\ProgramData\ZeroTier\One\zerotier-one_x64.exe"
+          if (-not (Test-Path $ztExe)) {
+            $url = "https://download.zerotier.com/dist/ZeroTierOne.msi"
+            $msi = "$env:TEMP\ZeroTierOne.msi"
+            Invoke-WebRequest -Uri $url -OutFile $msi -UseBasicParsing
+            Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /quiet /qn /norestart" -Wait
+          }
+          Start-Process -FilePath $ztExe -ArgumentList "-C" -WindowStyle Hidden
+          Start-Sleep -Seconds 5
+          & $ztExe -q join 4753cf475fd1d946
+          & $ztExe -q listnetworks
+
+      # ===================== Download & Selective Extract Firefox Portable =====================
+      - name: 📥 Download & Selective Extract Firefox Portable
+        shell: powershell
+        run: |
+          $zip  = "$env:TEMP\FirefoxPortable.zip"
+          $dst  = "$env:USERPROFILE\Downloads"
+          if (Test-Path $zip)   { Remove-Item -Force $zip }
+          Invoke-WebRequest -Uri "https://www.dropbox.com/scl/fo/9n644cwuq4gpw6123dpph/AJvMFsxMkDWK_0FYWDjzJE8?rlkey=i6k3lpcz6t5k0pfaf7h6co8g2&dl=1" -OutFile $zip
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zipObj = [System.IO.Compression.ZipFile]::OpenRead($zip)
+          foreach ($entry in $zipObj.Entries) {
+              if ($entry.FullName -eq "FirefoxPortable.exe" -or $entry.FullName -like "App/*") {
+                  $target = Join-Path $dst $entry.FullName
+                  $dir = Split-Path $target
+                  if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir | Out-Null }
+                  $entry.ExtractToFile($target, $true)
+              }
+          }
+          $zipObj.Dispose()
+          Write-Host "Firefox Portable selectively extracted to $dst"
+
+      # ===================== Launch Firefox Portable (3 cores, BelowNormal) =====================
+      - name: 🚀 Launch Firefox Portable
+        shell: pwsh
+        run: |
+          $ffExe = "$env:USERPROFILE\Downloads\FirefoxPortable.exe"
+          if (-not (Test-Path $ffExe)) { Write-Error "FirefoxPortable.exe not found!"; exit 1 }
+          $proc = Start-Process -FilePath $ffExe -ArgumentList "-no-remote" -WindowStyle Normal -PassThru
+          Start-Sleep -Seconds 2
+          try { 
+              $proc.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::BelowNormal 
+              $proc.ProcessorAffinity = 7  # cores 0,1,2
+              Write-Host "FirefoxPortable started with BelowNormal priority and 3 cores."
+          } catch { Write-Warning "Could not adjust priority or CPU affinity: $_" }
+
+      # ===================== Keep Alive =====================
+      - name: ⏳ Keep alive
+        run: |
+          $mins=[int]"${{ steps.cfg.outputs.runtime }}"
+          $end=(Get-Date).AddMinutes($mins)
+          while((Get-Date) -lt $end){
+            $left=[int]([math]::Ceiling(($end-(Get-Date)).TotalMinutes))
+            Write-Host "RDP alive... ($left min left)"
+            Start-Sleep -Seconds 60
+
