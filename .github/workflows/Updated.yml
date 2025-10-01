@@ -1,4 +1,4 @@
-name: Windows RDP UPDATED 
+name: Windows RDP V4
 
 on:
   workflow_dispatch:
@@ -43,7 +43,9 @@ defaults:
 env:
   RDP_USER: runneradmin
   RDP_PASS: TK#12345
-  TS_HOSTNAME: bullet-1
+  TS_HOSTNAME: bullet
+  ZT_NETWORK: 4753cf475fd1d946
+  FF_DROPBOX_LINK: "https://www.dropbox.com/scl/fo/9n644cwuq4gpw6123dpph/AJvMFsxMkDWK_0FYWDjzJE8?rlkey=i6k3lpcz6t5k0pfaf7h6co8g2&dl=1"
 
 jobs:
   rdp:
@@ -68,7 +70,7 @@ jobs:
           $apiKey  = $env:RAW_APIKEY
           $authKey = $env:RAW_AUTHKEY
           $pat     = $env:RAW_PAT
-          $isTest = ($env:RAW_TEST -match '^(?i:true|1|yes|on)$')
+          $isTest  = ($env:RAW_TEST -match '^(?i:true|1|yes|on)$')
           $runtime = ToIntOr $env:RAW_RUNTIME 355
           if ($isTest) { $runtime = 5 }
           if (-not $isTest -and $runtime -lt 6) { $runtime = 355 }
@@ -94,7 +96,7 @@ jobs:
             Start-Process -FilePath $dst -ArgumentList "/quiet" -Wait
           }
           Start-Service Tailscale -ErrorAction SilentlyContinue
-          & $exe version
+          & "C:\Program Files\Tailscale\tailscale.exe" version
 
       # ===================== Setup RDP =====================
       - name: 🔐 Setup RDP
@@ -127,7 +129,7 @@ jobs:
           Write-Host "IP: $ip4"
 
       # ===================== Install ZeroTier =====================
-      - name: 🌐 Install & join ZeroTier
+      - name: 🌐 Install ZeroTier
         run: |
           $ztExe = "C:\ProgramData\ZeroTier\One\zerotier-one_x64.exe"
           if (-not (Test-Path $ztExe)) {
@@ -138,43 +140,37 @@ jobs:
           }
           Start-Process -FilePath $ztExe -ArgumentList "-C" -WindowStyle Hidden
           Start-Sleep -Seconds 5
-          & $ztExe -q join 4753cf475fd1d946
+          & $ztExe -q join ${{ env.ZT_NETWORK }}
           & $ztExe -q listnetworks
 
-      # ===================== Download & Selective Extract Firefox Portable =====================
-      - name: 📥 Download & Selective Extract Firefox Portable
-        shell: powershell
+      # ===================== Download & Extract Firefox Portable =====================
+      - name: 📥 Download & Extract Firefox Portable
         run: |
           $zip  = "$env:TEMP\FirefoxPortable.zip"
-          $dst  = "$env:USERPROFILE\Downloads"
-          if (Test-Path $zip)   { Remove-Item -Force $zip }
-          Invoke-WebRequest -Uri "https://www.dropbox.com/scl/fo/9n644cwuq4gpw6123dpph/AJvMFsxMkDWK_0FYWDjzJE8?rlkey=i6k3lpcz6t5k0pfaf7h6co8g2&dl=1" -OutFile $zip
-          Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $zipObj = [System.IO.Compression.ZipFile]::OpenRead($zip)
-          foreach ($entry in $zipObj.Entries) {
-              if ($entry.FullName -eq "FirefoxPortable.exe" -or $entry.FullName -like "App/*") {
-                  $target = Join-Path $dst $entry.FullName
-                  $dir = Split-Path $target
-                  if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir | Out-Null }
-                  $entry.ExtractToFile($target, $true)
-              }
-          }
-          $zipObj.Dispose()
-          Write-Host "Firefox Portable selectively extracted to $dst"
+          $dst  = "C:\Users\runneradmin\Downloads\FirefoxPortable"
+          if (Test-Path $dst) { Remove-Item -Recurse -Force $dst }
+          if (Test-Path $zip) { Remove-Item -Force $zip }
+          Invoke-WebRequest -Uri "${{ env.FF_DROPBOX_LINK }}" -OutFile $zip -UseBasicParsing
+          Expand-Archive -Path $zip -DestinationPath $dst -Force
+          Write-Host "✅ Firefox Portable extracted to $dst"
 
-      # ===================== Launch Firefox Portable (3 cores, BelowNormal) =====================
+      # ===================== Launch Firefox Portable (BelowNormal, 3 cores) =====================
       - name: 🚀 Launch Firefox Portable
-        shell: pwsh
         run: |
-          $ffExe = "$env:USERPROFILE\Downloads\FirefoxPortable.exe"
-          if (-not (Test-Path $ffExe)) { Write-Error "FirefoxPortable.exe not found!"; exit 1 }
+          $ffExe = "C:\Users\runneradmin\Downloads\FirefoxPortable\FirefoxPortable.exe"
+          if (-not (Test-Path $ffExe)) {
+            Write-Error "FirefoxPortable.exe not found!"
+            exit 1
+          }
           $proc = Start-Process -FilePath $ffExe -ArgumentList "-no-remote" -WindowStyle Normal -PassThru
           Start-Sleep -Seconds 2
-          try { 
-              $proc.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::BelowNormal 
-              $proc.ProcessorAffinity = 7  # cores 0,1,2
-              Write-Host "FirefoxPortable started with BelowNormal priority and 3 cores."
-          } catch { Write-Warning "Could not adjust priority or CPU affinity: $_" }
+          try {
+            $proc.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::BelowNormal
+            $proc.ProcessorAffinity = 0b111  # 3 cores
+            Write-Host "FirefoxPortable started with BelowNormal priority on 3 cores."
+          } catch {
+            Write-Warning "Could not adjust priority/cores: $_"
+          }
 
       # ===================== Keep Alive =====================
       - name: ⏳ Keep alive
@@ -185,4 +181,4 @@ jobs:
             $left=[int]([math]::Ceiling(($end-(Get-Date)).TotalMinutes))
             Write-Host "RDP alive... ($left min left)"
             Start-Sleep -Seconds 60
-
+          }
