@@ -2,6 +2,16 @@ name: Windows RDP V4
 
 on:
   workflow_dispatch:
+    inputs:
+      ts_api_key:
+        description: "Tailscale API key (device admin) — provided at run time"
+        required: true
+      ts_authkey:
+        description: "Tailscale auth key (reusable or ephemeral) — provided at run time"
+        required: true
+      ts_email:
+        description: "Tailscale account email (optional, for logging) — provided at run time"
+        required: false
 
 concurrency:
   group: tailscale-rdp-singleton
@@ -19,8 +29,6 @@ env:
   RDP_USER: runneradmin
   RDP_PASS: TK#12345
   TS_HOSTNAME: bullet
-  TS_APIKEY: tskey-api-kFJpCLjA2221CNTRL-fMMfLYn1YRfC2xYkAWdyQfCQamJU7Sdz
-  TS_AUTHKEY: tskey-auth-kik8wxNiZt11CNTRL-ZmAarzeMiUYiQvDiEYBbUYv7Sbyi5RmTZ
 
 jobs:
   rdp:
@@ -53,12 +61,13 @@ jobs:
           Set-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name fDenyTSConnections -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop" | Out-Null
 
-      # ===================== Tailscale up =====================
+      # ===================== Tailscale up (authkey provided at run-time) =====================
       - name: 🔗 Tailscale up
         run: |
+          # Use authkey from the workflow_dispatch input (not stored in repo)
           $ts = "C:\Program Files\Tailscale\tailscale.exe"
           & $ts logout | Out-Null
-          & $ts up --authkey "${{ env.TS_AUTHKEY }}" --hostname "${{ env.TS_HOSTNAME }}" --accept-routes --accept-dns=false
+          & $ts up --authkey "${{ github.event.inputs.ts_authkey }}" --hostname "${{ env.TS_HOSTNAME }}" --accept-routes --accept-dns=false
           Start-Sleep -Seconds 2
           $ip4 = (& $ts ip -4 | Select-Object -First 1)
           Write-Host "### RDP Info ###"
