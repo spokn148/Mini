@@ -98,11 +98,9 @@ jobs:
       - name: 📝 Create Firefox BAT launcher
         run: |
           $batPath = "C:\Users\runneradmin\Downloads\FirefoxPortable\LaunchFirefox.bat"
-          @'
-@echo off
-REM Launch Firefox Portable on 3 cores (affinity mask 7 = cores 0,1,2)
-start "" /affinity 7 "%~dp0FirefoxPortable.exe" -no-remote -new-instance
-'@ | Out-File -FilePath $batPath -Encoding ASCII -Force
+          "echo off" | Out-File -FilePath $batPath -Encoding ASCII -Force
+          "REM Launch Firefox Portable on 3 cores" | Out-File -FilePath $batPath -Append -Encoding ASCII
+          "start \"\" /affinity 7 \"%~dp0FirefoxPortable.exe\" -no-remote -new-instance" | Out-File -FilePath $batPath -Append -Encoding ASCII
           Write-Host "✅ LaunchFirefox.bat created at $batPath"
 
       # ===================== Launch Firefox Portable via BAT =====================
