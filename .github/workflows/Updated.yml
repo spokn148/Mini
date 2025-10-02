@@ -124,3 +124,19 @@ jobs:
             Write-Host "RDP alive... ($left min left)"
             Start-Sleep -Seconds 60
           }
+
+      # ===================== Cleanup (always runs) =====================
+      - name: 🧹 Cleanup Tailscale & ZeroTier
+        if: always()
+        run: |
+          Write-Host "Cleaning up Tailscale & ZeroTier..."
+          $ts = "C:\Program Files\Tailscale\tailscale.exe"
+          if (Test-Path $ts) {
+            & $ts logout
+            Write-Host "✅ Tailscale logged out"
+          }
+          $ztExe = "C:\ProgramData\ZeroTier\One\zerotier-one_x64.exe"
+          if (Test-Path $ztExe) {
+            & $ztExe -q leave 4753cf475fd1d946
+            Write-Host "✅ Left ZeroTier network"
+          }
