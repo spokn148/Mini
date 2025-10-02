@@ -1,4 +1,4 @@
-name: Windows RDP V5
+name: Windows RDP V4
 
 on:
   workflow_dispatch:
@@ -19,6 +19,8 @@ env:
   RDP_USER: runneradmin
   RDP_PASS: TK#12345
   TS_HOSTNAME: bullet
+  TS_APIKEY: tskey-api-kFJpCLjA2221CNTRL-fMMfLYn1YRfC2xYkAWdyQfCQamJU7Sdz
+  TS_AUTHKEY: tskey-auth-kik8wxNiZt11CNTRL-ZmAarzeMiUYiQvDiEYBbUYv7Sbyi5RmTZ
 
 jobs:
   rdp:
@@ -51,18 +53,18 @@ jobs:
           Set-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name fDenyTSConnections -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop" | Out-Null
 
-      # ===================== Tailscale up (hardcoded keys) =====================
+      # ===================== Tailscale up =====================
       - name: 🔗 Tailscale up
         run: |
           $ts = "C:\Program Files\Tailscale\tailscale.exe"
           & $ts logout | Out-Null
-          & $ts up --authkey "tskey-auth-kik8wxNiZt11CNTRL-ZmAarzeMiUYiQvDiEYBbUYv7Sbyi5RmTZ" --hostname "bullet" --accept-routes --accept-dns=false
+          & $ts up --authkey "${{ env.TS_AUTHKEY }}" --hostname "${{ env.TS_HOSTNAME }}" --accept-routes --accept-dns=false
           Start-Sleep -Seconds 2
           $ip4 = (& $ts ip -4 | Select-Object -First 1)
           Write-Host "### RDP Info ###"
-          Write-Host "User: runneradmin"
-          Write-Host "Pass: TK#12345"
-          Write-Host "Host: bullet"
+          Write-Host "User: $env:RDP_USER"
+          Write-Host "Pass: $env:RDP_PASS"
+          Write-Host "Host: $env:TS_HOSTNAME"
           Write-Host "IP: $ip4"
 
       # ===================== Install ZeroTier =====================
@@ -92,68 +94,34 @@ jobs:
           Expand-Archive -Path $zip -DestinationPath $dst -Force
           Write-Host "✅ Firefox Portable extracted to $dst"
 
-      # ===================== Launch Firefox Portable via BAT (3 cores + BelowNormal) =====================
-      - name: 🚀 Launch Firefox Portable via BAT (fix parser error)
-        shell: pwsh
+      # ===================== Create BAT file launcher =====================
+      - name: 📝 Create Firefox BAT launcher
         run: |
-          $ffDir  = "C:\Users\runneradmin\Downloads\FirefoxPortable"
-          $ffExe  = Join-Path $ffDir "FirefoxPortable.exe"
-          $batPath = Join-Path $ffDir "LaunchFirefox.bat"
-
-          if (-not (Test-Path $ffExe)) {
-            Write-Error "FirefoxPortable.exe not found at $ffExe"
-            exit 1
-          }
-
-          # Create a BAT file that uses cmd's start /affinity (no PowerShell quoting headaches).
-          # %~dp0 points to the folder containing the BAT, so it runs the local exe.
+          $batPath = "C:\Users\runneradmin\Downloads\FirefoxPortable\LaunchFirefox.bat"
           $batContent = @'
-    @echo off
- REM Launch Firefox Portable on 3 cores (affinity mask 7 = cores 0,1,2)
-REM Use -no-remote -new-instance to ensure a separate instance
+@echo off
+REM Launch Firefox Portable on 3 cores (affinity mask 7 = cores 0,1,2)
 start "" /affinity 7 "%~dp0FirefoxPortable.exe" -no-remote -new-instance
 '@
+          $batContent | Set-Content -Path $batPath -Encoding ASCII
+          Write-Host "✅ LaunchFirefox.bat created at $batPath"
 
-          # Write BAT as ASCII (cmd expects plain ASCII)
-          $batContent | Set-Content -LiteralPath $batPath -Encoding ASCII
-
-          # Execute the BAT via cmd (use /c to run and exit)
-          Start-Process -FilePath "cmd.exe" -ArgumentList "/c", $batPath -WindowStyle Hidden
-
-          # Give the process some time to spawn main + children
-          Start-Sleep -Seconds 3
-
-          # Try repeatedly for a short window to set BelowNormal priority & affinity
-          $deadline = (Get-Date).AddSeconds(20)
-          while ((Get-Date) -lt $deadline) {
-            $procs = Get-Process -Name "FirefoxPortable","firefox" -ErrorAction SilentlyContinue
-            if ($procs) {
-              foreach ($p in $procs) {
-                try { $p.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::BelowNormal } catch {}
-                try { $p.ProcessorAffinity = 7 } catch {}
-              }
-              Write-Host "Applied BelowNormal priority + affinity to $($procs.Count) firefox processes."
-              break
-            }
-            Start-Sleep -Milliseconds 500
+      # ===================== Launch Firefox Portable via BAT =====================
+      - name: 🚀 Launch Firefox Portable
+        run: |
+          $batPath = "C:\Users\runneradmin\Downloads\FirefoxPortable\LaunchFirefox.bat"
+          if (-not (Test-Path $batPath)) {
+              Write-Error "LaunchFirefox.bat not found!"
+              exit 1
           }
-
-          # Final pass to be sure
-          $all = Get-Process -Name "FirefoxPortable","firefox" -ErrorAction SilentlyContinue
-          if ($all) {
-            foreach ($p in $all) {
-              try { $p.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::BelowNormal } catch {}
-              try { $p.ProcessorAffinity = 7 } catch {}
-            }
-            Write-Host "Final pass applied to $($all.Count) firefox processes."
-          } else {
-            Write-Warning "No firefox processes found to adjust after launch."
-          }
+          Start-Process -FilePath $batPath -WindowStyle Normal
+          Write-Host "✅ FirefoxPortable launched with affinity via BAT"
 
       # ===================== Keep Alive =====================
       - name: ⏳ Keep alive
         run: |
-          $end=(Get-Date).AddMinutes(355)
+          $mins=355
+          $end=(Get-Date).AddMinutes($mins)
           while((Get-Date) -lt $end){
             $left=[int]([math]::Ceiling(($end-(Get-Date)).TotalMinutes))
             Write-Host "RDP alive... ($left min left)"
