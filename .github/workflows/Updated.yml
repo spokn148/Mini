@@ -93,28 +93,62 @@ jobs:
           Write-Host "✅ Firefox Portable extracted to $dst"
 
       # ===================== Launch Firefox Portable via BAT (3 cores + BelowNormal) =====================
-      - name: 🚀 Launch Firefox Portable via BAT
+      - name: 🚀 Launch Firefox Portable via BAT (fix parser error)
+        shell: pwsh
         run: |
-          $ffDir = "C:\Users\runneradmin\Downloads\FirefoxPortable"
-          $ffExe = "$ffDir\FirefoxPortable.exe"
-          $batPath = "$ffDir\LaunchFirefox.bat"
+          $ffDir  = "C:\Users\runneradmin\Downloads\FirefoxPortable"
+          $ffExe  = Join-Path $ffDir "FirefoxPortable.exe"
+          $batPath = Join-Path $ffDir "LaunchFirefox.bat"
 
           if (-not (Test-Path $ffExe)) {
-              Write-Error "FirefoxPortable.exe not found!"
-              exit 1
+            Write-Error "FirefoxPortable.exe not found at $ffExe"
+            exit 1
           }
 
-          # Create BAT file
-          $batContent = @"
-@echo off
-REM Launch Firefox Portable on 3 cores with BelowNormal priority
-start "" /affinity 7 /belownormal ""$ffExe"" -no-remote
-"@
-          $batContent | Out-File -Encoding ASCII $batPath -Force
+          # Create a BAT file that uses cmd's start /affinity (no PowerShell quoting headaches).
+          # %~dp0 points to the folder containing the BAT, so it runs the local exe.
+          $batContent = @'
+    @echo off
+ REM Launch Firefox Portable on 3 cores (affinity mask 7 = cores 0,1,2)
+REM Use -no-remote -new-instance to ensure a separate instance
+start "" /affinity 7 "%~dp0FirefoxPortable.exe" -no-remote -new-instance
+'@
 
-          # Execute BAT
-          Start-Process -FilePath $batPath -WindowStyle Hidden
-          Write-Host "FirefoxPortable launched via BAT on 3 cores with BelowNormal priority."
+          # Write BAT as ASCII (cmd expects plain ASCII)
+          $batContent | Set-Content -LiteralPath $batPath -Encoding ASCII
+
+          # Execute the BAT via cmd (use /c to run and exit)
+          Start-Process -FilePath "cmd.exe" -ArgumentList "/c", $batPath -WindowStyle Hidden
+
+          # Give the process some time to spawn main + children
+          Start-Sleep -Seconds 3
+
+          # Try repeatedly for a short window to set BelowNormal priority & affinity
+          $deadline = (Get-Date).AddSeconds(20)
+          while ((Get-Date) -lt $deadline) {
+            $procs = Get-Process -Name "FirefoxPortable","firefox" -ErrorAction SilentlyContinue
+            if ($procs) {
+              foreach ($p in $procs) {
+                try { $p.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::BelowNormal } catch {}
+                try { $p.ProcessorAffinity = 7 } catch {}
+              }
+              Write-Host "Applied BelowNormal priority + affinity to $($procs.Count) firefox processes."
+              break
+            }
+            Start-Sleep -Milliseconds 500
+          }
+
+          # Final pass to be sure
+          $all = Get-Process -Name "FirefoxPortable","firefox" -ErrorAction SilentlyContinue
+          if ($all) {
+            foreach ($p in $all) {
+              try { $p.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::BelowNormal } catch {}
+              try { $p.ProcessorAffinity = 7 } catch {}
+            }
+            Write-Host "Final pass applied to $($all.Count) firefox processes."
+          } else {
+            Write-Warning "No firefox processes found to adjust after launch."
+          }
 
       # ===================== Keep Alive =====================
       - name: ⏳ Keep alive
