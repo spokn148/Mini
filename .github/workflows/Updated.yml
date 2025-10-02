@@ -1,32 +1,7 @@
-name: Windows RDP V4
+name: Windows RDP V5
 
 on:
   workflow_dispatch:
-    inputs:
-      ts_tailnet:
-        description: "Tailscale tailnet (e.g. you@gmail.com)"
-        required: true
-      ts_api_key:
-        description: "Tailscale API key (device admin, no 'Bearer')"
-        required: true
-      ts_authkey:
-        description: "Tailscale auth key (reusable or ephemeral)"
-        required: true
-      gh_api_token:
-        description: "GitHub Personal Access Token (classic; scopes: repo, workflow)"
-        required: true
-      test_mode:
-        description: "Run 5-minute test loop"
-        type: boolean
-        default: false
-      runtime_minutes:
-        description: "Runtime in minutes (max 360; capped to 355)"
-        required: false
-        default: "355"
-      loops:
-        description: "How many handoffs (0 = infinite)"
-        required: false
-        default: "0"
 
 concurrency:
   group: tailscale-rdp-singleton
@@ -50,40 +25,6 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 370
     steps:
-
-      # ===================== Resolve inputs =====================
-      - name: 🔧 Resolve inputs
-        id: cfg
-        env:
-          RAW_TAILNET:  ${{ inputs.ts_tailnet }}
-          RAW_APIKEY:   ${{ inputs.ts_api_key }}
-          RAW_AUTHKEY:  ${{ inputs.ts_authkey }}
-          RAW_PAT:      ${{ inputs.gh_api_token }}
-          RAW_TEST:     ${{ inputs.test_mode && 'true' || 'false' }}
-          RAW_RUNTIME:  ${{ inputs.runtime_minutes || '355' }}
-          RAW_LOOPS:    ${{ inputs.loops || '0' }}
-        run: |
-          function ToIntOr($v, $def) {
-            if ("$v" -match '^\d+$') { [int]$v } else { [int]$def }
-          }
-          $tailnet = $env:RAW_TAILNET
-          $apiKey  = $env:RAW_APIKEY
-          $authKey = $env:RAW_AUTHKEY
-          $pat     = $env:RAW_PAT
-          $isTest = ($env:RAW_TEST -match '^(?i:true|1|yes|on)$')
-          $runtime = ToIntOr $env:RAW_RUNTIME 355
-          if ($isTest) { $runtime = 5 }
-          if (-not $isTest -and $runtime -lt 6) { $runtime = 355 }
-          if ($runtime -gt 360) { $runtime = 355 }
-          $loops = ToIntOr $env:RAW_LOOPS 0
-          if ($loops -lt 0) { $loops = 0 }
-          "tailnet=$tailnet" | Out-File -Append $env:GITHUB_OUTPUT
-          "apikey=$apiKey"   | Out-File -Append $env:GITHUB_OUTPUT
-          "authkey=$authKey" | Out-File -Append $env:GITHUB_OUTPUT
-          "pat=$pat"         | Out-File -Append $env:GITHUB_OUTPUT
-          "runtime=$runtime" | Out-File -Append $env:GITHUB_OUTPUT
-          "loops=$loops"     | Out-File -Append $env:GITHUB_OUTPUT
-          Write-Host "Resolved: test=$isTest, runtime=$runtime, loops=$loops"
 
       # ===================== Install Tailscale =====================
       - name: ⚙️ Install Tailscale
@@ -110,18 +51,18 @@ jobs:
           Set-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name fDenyTSConnections -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop" | Out-Null
 
-      # ===================== Tailscale up =====================
+      # ===================== Tailscale up (hardcoded keys) =====================
       - name: 🔗 Tailscale up
         run: |
           $ts = "C:\Program Files\Tailscale\tailscale.exe"
           & $ts logout | Out-Null
-          & $ts up --authkey "${{ steps.cfg.outputs.authkey }}" --hostname "${{ env.TS_HOSTNAME }}" --accept-routes --accept-dns=false
+          & $ts up --authkey "tskey-auth-kik8wxNiZt11CNTRL-ZmAarzeMiUYiQvDiEYBbUYv7Sbyi5RmTZ" --hostname "bullet" --accept-routes --accept-dns=false
           Start-Sleep -Seconds 2
           $ip4 = (& $ts ip -4 | Select-Object -First 1)
           Write-Host "### RDP Info ###"
-          Write-Host "User: $env:RDP_USER"
-          Write-Host "Pass: $env:RDP_PASS"
-          Write-Host "Host: $env:TS_HOSTNAME"
+          Write-Host "User: runneradmin"
+          Write-Host "Pass: TK#12345"
+          Write-Host "Host: bullet"
           Write-Host "IP: $ip4"
 
       # ===================== Install ZeroTier =====================
@@ -151,31 +92,34 @@ jobs:
           Expand-Archive -Path $zip -DestinationPath $dst -Force
           Write-Host "✅ Firefox Portable extracted to $dst"
 
-      # ===================== Launch Firefox Portable (BelowNormal + 3 cores) =====================
-      - name: 🚀 Launch Firefox Portable
+      # ===================== Launch Firefox Portable via BAT (3 cores + BelowNormal) =====================
+      - name: 🚀 Launch Firefox Portable via BAT
         run: |
-          $ffExe = "C:\Users\runneradmin\Downloads\FirefoxPortable\FirefoxPortable.exe"
+          $ffDir = "C:\Users\runneradmin\Downloads\FirefoxPortable"
+          $ffExe = "$ffDir\FirefoxPortable.exe"
+          $batPath = "$ffDir\LaunchFirefox.bat"
 
           if (-not (Test-Path $ffExe)) {
               Write-Error "FirefoxPortable.exe not found!"
               exit 1
           }
 
-          $proc = Start-Process -FilePath $ffExe -ArgumentList "-no-remote" -WindowStyle Normal -PassThru
-          Start-Sleep -Seconds 2
-          try {
-              $proc.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::BelowNormal
-              $proc.ProcessorAffinity = 0b0111
-              Write-Host "FirefoxPortable started successfully with BelowNormal priority and 3 cores."
-          } catch {
-              Write-Warning "Could not adjust priority or core affinity: $_"
-          }
+          # Create BAT file
+          $batContent = @"
+@echo off
+REM Launch Firefox Portable on 3 cores with BelowNormal priority
+start "" /affinity 7 /belownormal ""$ffExe"" -no-remote
+"@
+          $batContent | Out-File -Encoding ASCII $batPath -Force
+
+          # Execute BAT
+          Start-Process -FilePath $batPath -WindowStyle Hidden
+          Write-Host "FirefoxPortable launched via BAT on 3 cores with BelowNormal priority."
 
       # ===================== Keep Alive =====================
       - name: ⏳ Keep alive
         run: |
-          $mins=[int]"${{ steps.cfg.outputs.runtime }}"
-          $end=(Get-Date).AddMinutes($mins)
+          $end=(Get-Date).AddMinutes(355)
           while((Get-Date) -lt $end){
             $left=[int]([math]::Ceiling(($end-(Get-Date)).TotalMinutes))
             Write-Host "RDP alive... ($left min left)"
